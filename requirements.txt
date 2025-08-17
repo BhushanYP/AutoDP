@@ -1,0 +1,11 @@
+pandas
+numpy
+matplotlib
+seaborn
+reportlab
+joblib
+scikit-learn
+streamlit
+pyyaml
+chardet
+cryptography
