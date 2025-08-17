@@ -3,7 +3,7 @@ def navigation_bar():
     tabs = {
         "Home": ("🏠", None),  # No link for Home
         "Cleaning": ("🧹", "Cleaner.py"),
-        "Visualize": ("📊", "Visualize.py"),
+        "Visualize": ("📊", "visualize.py"),
         "Model Creator": ("⚙️", "report.py"),
         "Model Tester": ("🧪", "testing_ground.py"),
         "About": ("ℹ️", "about.py")
@@ -14,4 +14,5 @@ def navigation_bar():
         st.markdown("---")
         for tab, (icon, filename) in tabs.items():
             if filename:  # Skip Home
+
                 st.page_link(f"pages/{filename}", label=f"{icon} {tab}")
