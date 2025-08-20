@@ -121,12 +121,19 @@ def read_csv_with_encoding(file):
         encodings.append(encoding)
     encodings.extend(["utf-8", "utf-8-sig", "latin1", "ISO-8859-1", "cp1252"])
 
-    for enc in encodings:
+    for i, enc in enumerate(encodings):
         try:
             if not isinstance(file, str):
-                file.seek(0)
+                file.seek(0)  # reset every time
             df = pd.read_csv(file, encoding=enc)
-            return df, f"✅ Read successfully with encoding '{enc}'"
+
+            if not df.empty:
+                if i == 0 and "✅" in msg:  
+                    return df, msg.replace("✅", "✅ Read successfully with")
+                elif i == 0 and "⚠️" in msg:  
+                    return df, f"⚠️ Fallback to '{enc}', read successfully"
+                else:
+                    return df, f"✅ Read successfully with fallback encoding '{enc}'"
         except Exception:
             continue
 
@@ -135,9 +142,10 @@ def read_csv_with_encoding(file):
         if not isinstance(file, str):
             file.seek(0)
         df = pd.read_csv(file, encoding="utf-8", errors="ignore")
-        return df, "⚠️ Read with utf-8 (errors ignored)"
+        return df, "⚠️ Forced read with utf-8 (errors ignored)"
     except Exception as e:
         return pd.DataFrame(), f"❌ Completely failed to read CSV: {e}"
+
 
 def remove_outliers_iqr(df, columns=None, factor=1.5):
     # Automatically use all numeric columns if none specified
@@ -161,5 +169,6 @@ def remove_outliers_iqr(df, columns=None, factor=1.5):
         mask &= df[col].between(lower_bound, upper_bound)
 
     return df[mask]
+
 
 
