@@ -8,4 +8,5 @@ scikit-learn
 streamlit
 pyyaml
 chardet
+sqlalchemy
 cryptography
