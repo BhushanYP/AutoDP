@@ -1,38 +1,8 @@
-import streamlit as st
-import base64
 import pandas as pd
-import chardet
-import os
+from Back_End import process
+import io  # To handle file-like objects from Streamlit
 
 pd.options.mode.copy_on_write = True
-
-@st.cache_data
-def get_base64_webp(image_path: str) -> str:
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
-
-def set_bg_image(image_file: str):
-    if not os.path.exists(image_file):
-        st.warning(f"Background image '{image_file}' not found.")
-        return
-
-    if not image_file.lower().endswith(".webp"):
-        st.error("Only WebP format is supported.")
-        return
-
-    base64_str = get_base64_webp(image_file)
-
-    st.markdown(f"""
-        <style>
-        [data-testid="stAppViewContainer"] {{
-            background-image: url("data:image/webp;base64,{base64_str}");
-            background-size: cover;
-            background-repeat: no-repeat;
-            background-position: top;
-            background-attachment: fixed;
-        }}
-        </style>
-    """, unsafe_allow_html=True)
 
 def detect_date_columns(df):
     """Detect columns that are likely to contain dates."""
@@ -58,109 +28,66 @@ def normalize_dates(df, column_name):
     except Exception:
         return df
 
-import chardet
-import os
-
-MAX_FILE_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
-
-def detect_encoding(file, sample_size=32768, samples=3):
+def process_file(data, columns_to_include=None, columns_to_clean=None):
     """
-    Detects encoding of a file path or file-like object.
-    Limits file size to 1 GB for safety.
+    Process input data for cleaning.
+    - If `data` is a file-like object (CSV), read it.
+    - If `data` is already a pandas DataFrame (SQL), use it directly.
     """
-    try:
-        # If it's a file path, check file size
-        if isinstance(file, str):
-            file_size = os.path.getsize(file)
-            if file_size > MAX_FILE_SIZE:
-                return None, f"File too large ({file_size / (1024**3):.2f} GB). Limit is 1 GB."
 
-            raw_data = b""
-            positions = [0]  # Always sample start
-            if file_size > sample_size:
-                step = file_size // (samples + 1)
-                positions.extend(step * i for i in range(1, samples))
+    # Case 1: CSV file-like object
+    if isinstance(data, (io.StringIO, io.BytesIO)):
+        df_result = process.read_csv_with_encoding(data)
+        if isinstance(df_result, str):  # error string
+            return df_result
+        df, _ = df_result  
 
-            with open(file, "rb") as f:
-                for pos in positions:
-                    f.seek(pos)
-                    raw_data += f.read(sample_size)
+    # Case 2: Pandas DataFrame (SQL query result)
+    elif isinstance(data, pd.DataFrame):
+        df = data.copy()
 
-        else:  # File-like object
-            # Try size check if seekable
-            if hasattr(file, "seek") and hasattr(file, "tell"):
-                file.seek(0, 2)
-                size = file.tell()
-                if size > MAX_FILE_SIZE:
-                    return None, f"File too large ({size / (1024**3):.2f} GB). Limit is 1 GB."
-                file.seek(0)
-            
-            raw_data = file.read(sample_size * samples)
-            if hasattr(file, "seek"):
-                file.seek(0)
-
-        # Detect encoding
-        result = chardet.detect(raw_data)
-        encoding = result.get("encoding")
-        confidence = result.get("confidence", 0)
-
-        if not encoding or confidence < 0.5:
-            encoding = "utf-8"
-
-        return encoding, None
-
-    except Exception as e:
-        return None, f"Encoding detection failed: {e}"
-
-
-def read_csv_with_encoding(file):
-    """Reads a CSV with robust encoding fallback. Always returns a DataFrame + message."""
-    
-    # Encodings to try (detect first, then fallbacks)
-    encodings = []
-    encoding, error = detect_encoding(file)
-    if encoding:
-        encodings.append(encoding)
-    # Add common fallbacks
-    encodings.extend(["utf-8", "utf-8-sig", "latin1", "ISO-8859-1", "cp1252"])
-    
-    for enc in encodings:
-        try:
-            if not isinstance(file, str):
-                file.seek(0)
-            df = pd.read_csv(file, encoding=enc)
-            return df, f"Read successfully with encoding '{enc}'"
-        except Exception:
-            continue
-    
-    # 🔥 Last resort: force read ignoring errors
-    try:
-        if not isinstance(file, str):
-            file.seek(0)
-        df = pd.read_csv(file, encoding="utf-8", errors="ignore")
-        return df, "Read with utf-8 (errors ignored)"
-    except Exception as e:
-        return pd.DataFrame(), f"❌ Completely failed to read CSV: {e}"
-    
-def remove_outliers_iqr(df, columns=None, factor=1.5):
-    # Automatically use all numeric columns if none specified
-    if columns is None:
-        columns = df.select_dtypes(include='number').columns
     else:
-        # Keep only numeric columns from the user-specified list
-        columns = [col for col in columns if pd.api.types.is_numeric_dtype(df[col])]
+        return "❌ Unsupported input type for process_file"
 
-    # Initialize mask as all True (keep all rows initially)
-    mask = pd.Series(True, index=df.index)
+    # ===== Cleaning Steps =====
+    df = df.drop_duplicates()
+    df = df.replace(['NA', 'NULL', 'null'], pd.NA)
 
-    for col in columns:
-        Q1 = df[col].quantile(0.25)
-        Q3 = df[col].quantile(0.75)
-        IQR = Q3 - Q1
-        lower_bound = Q1 - factor * IQR
-        upper_bound = Q3 + factor * IQR
+    # Limit DataFrame to only selected columns before cleaning
+    if columns_to_include:
+        df = df[[col for col in columns_to_include if col in df.columns]]
 
-        # Update mask: keep only rows within bounds for this column
-        mask &= df[col].between(lower_bound, upper_bound)
+    # Determine which of the selected columns are date-like
+    date_columns = detect_date_columns(df)
+    clean_targets = columns_to_clean if columns_to_clean else df.columns
 
-    return df[mask]
+    for column in clean_targets:
+        if column not in df.columns:
+            continue
+
+        # Normalize date columns
+        if column in date_columns:
+            df = normalize_dates(df, column)
+
+        # Fill missing values
+        if df[column].dtype == 'object' and not df[column].dropna().empty:
+            mode_value = df[column].mode()[0]
+            df[column] = df[column].fillna(mode_value)
+        elif pd.api.types.is_numeric_dtype(df[column]) and not df[column].dropna().empty:
+            median_value = df[column].median()
+            df[column] = df[column].fillna(median_value)
+
+    # Drop columns with >40% missing data
+    missing_pct = df.isnull().mean()
+    df = df.drop(columns=missing_pct[missing_pct > 0.4].index)
+
+    # Drop rows if <10% have missing data
+    if (df.isnull().any(axis=1).sum() / len(df)) * 100 < 10:
+        df = df.dropna()
+
+    # Final CSV output
+    csv_output = io.StringIO()
+    df.to_csv(csv_output, index=False)
+    csv_output.seek(0)
+
+    return csv_output
