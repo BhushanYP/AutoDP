@@ -58,9 +58,6 @@ def normalize_dates(df, column_name):
     except Exception:
         return df
 
-import chardet
-import os
-
 MAX_FILE_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
 
 def detect_encoding(file, sample_size=32768, samples=3):
@@ -69,79 +66,80 @@ def detect_encoding(file, sample_size=32768, samples=3):
     Limits file size to 1 GB for safety.
     """
     try:
-        # If it's a file path, check file size
-        if isinstance(file, str):
+        if isinstance(file, str):  # File path
             file_size = os.path.getsize(file)
             if file_size > MAX_FILE_SIZE:
-                return None, f"File too large ({file_size / (1024**3):.2f} GB). Limit is 1 GB."
+                return {"status": "error", "encoding": None,
+                        "message": f"File too large ({file_size / (1024**3):.2f} GB). Limit is 1 GB."}
 
-            raw_data = b""
-            positions = [0]  # Always sample start
+            positions = [0]
             if file_size > sample_size:
                 step = file_size // (samples + 1)
                 positions.extend(step * i for i in range(1, samples))
 
+            raw_data = b""
             with open(file, "rb") as f:
                 for pos in positions:
                     f.seek(pos)
                     raw_data += f.read(sample_size)
 
         else:  # File-like object
-            # Try size check if seekable
             if hasattr(file, "seek") and hasattr(file, "tell"):
                 file.seek(0, 2)
                 size = file.tell()
                 if size > MAX_FILE_SIZE:
-                    return None, f"File too large ({size / (1024**3):.2f} GB). Limit is 1 GB."
+                    return {"status": "error", "encoding": None,
+                            "message": f"File too large ({size / (1024**3):.2f} GB). Limit is 1 GB."}
                 file.seek(0)
-            
+
             raw_data = file.read(sample_size * samples)
             if hasattr(file, "seek"):
                 file.seek(0)
 
-        # Detect encoding
         result = chardet.detect(raw_data)
         encoding = result.get("encoding")
         confidence = result.get("confidence", 0)
 
-        if not encoding or confidence < 0.5:
-            encoding = "utf-8"
-
-        return encoding, None
+        if encoding and confidence >= 0.5:
+            return {"status": "detected", "encoding": encoding,
+                    "message": f"Detected encoding '{encoding}' (confidence {confidence:.2f})"}
+        else:
+            return {"status": "fallback", "encoding": "utf-8",
+                    "message": "Low confidence detection. Falling back to 'utf-8'."}
 
     except Exception as e:
-        return None, f"Encoding detection failed: {e}"
-
+        return {"status": "error", "encoding": None,
+                "message": f"Encoding detection failed: {e}"}
 
 def read_csv_with_encoding(file):
-    """Reads a CSV with robust encoding fallback. Always returns a DataFrame + message."""
-    
-    # Encodings to try (detect first, then fallbacks)
+    """
+    Reads a CSV with robust encoding fallback.
+    Returns DataFrame + status + message.
+    """
     encodings = []
-    encoding, error = detect_encoding(file)
-    if encoding:
-        encodings.append(encoding)
-    # Add common fallbacks
+    det = detect_encoding(file)
+    if det["encoding"]:
+        encodings.append(det["encoding"])
     encodings.extend(["utf-8", "utf-8-sig", "latin1", "ISO-8859-1", "cp1252"])
-    
+
     for enc in encodings:
         try:
             if not isinstance(file, str):
                 file.seek(0)
             df = pd.read_csv(file, encoding=enc)
-            return df, f"Read successfully with encoding '{enc}'"
+            return df, "success", f"Read successfully with encoding '{enc}'"
         except Exception:
             continue
-    
-    # 🔥 Last resort: force read ignoring errors
+
+    # Last resort
     try:
         if not isinstance(file, str):
             file.seek(0)
         df = pd.read_csv(file, encoding="utf-8", errors="ignore")
-        return df, "Read with utf-8 (errors ignored)"
+        return df, "warning", "Read with utf-8 (errors ignored)"
     except Exception as e:
-        return pd.DataFrame(), f"❌ Completely failed to read CSV: {e}"
-    
+        return pd.DataFrame(), "error", f"❌ Completely failed to read CSV: {e}"
+
 def remove_outliers_iqr(df, columns=None, factor=1.5):
     # Automatically use all numeric columns if none specified
     if columns is None:
@@ -164,3 +162,4 @@ def remove_outliers_iqr(df, columns=None, factor=1.5):
         mask &= df[col].between(lower_bound, upper_bound)
 
     return df[mask]
+
