@@ -58,6 +58,7 @@ def normalize_dates(df, column_name):
     except Exception:
         return df
 
+import pandas as pd
 import chardet
 import os
 
@@ -69,7 +70,7 @@ def detect_encoding(file, sample_size=32768, samples=3):
     Limits file size to 1 GB for safety.
     """
     try:
-        # If it's a file path, check file size
+        # Handle file path case
         if isinstance(file, str):
             file_size = os.path.getsize(file)
             if file_size > MAX_FILE_SIZE:
@@ -86,15 +87,14 @@ def detect_encoding(file, sample_size=32768, samples=3):
                     f.seek(pos)
                     raw_data += f.read(sample_size)
 
-        else:  # File-like object
-            # Try size check if seekable
+        else:  # File-like object (UploadedFile, BytesIO, etc.)
             if hasattr(file, "seek") and hasattr(file, "tell"):
                 file.seek(0, 2)
                 size = file.tell()
                 if size > MAX_FILE_SIZE:
                     return None, f"File too large ({size / (1024**3):.2f} GB). Limit is 1 GB."
                 file.seek(0)
-            
+
             raw_data = file.read(sample_size * samples)
             if hasattr(file, "seek"):
                 file.seek(0)
@@ -104,7 +104,8 @@ def detect_encoding(file, sample_size=32768, samples=3):
         encoding = result.get("encoding")
         confidence = result.get("confidence", 0)
 
-        if not encoding or confidence < 0.5:
+        # ASCII is almost always wrong → treat as UTF-8
+        if not encoding or encoding.lower() == "ascii" or confidence < 0.5:
             encoding = "utf-8"
 
         return encoding, None
@@ -114,19 +115,32 @@ def detect_encoding(file, sample_size=32768, samples=3):
 
 
 def read_csv_with_encoding(file):
-    """Reads a CSV with encoding detection and error handling."""
+    """Reads a CSV with encoding detection, delimiter auto-detect, and fallbacks."""
     encoding, error = detect_encoding(file)
     if error:
         return None, error
 
     try:
         if not isinstance(file, str):
-            file.seek(0)  # Reset stream before reading again
+            file.seek(0)
 
-        df = pd.read_csv(file, encoding=encoding)
+        # First attempt: detected encoding + auto delimiter
+        df = pd.read_csv(file, encoding=encoding, sep=None, engine="python")
         return df, None
-    except Exception as e:
-        return None, f"Error reading CSV: {e}"
+
+    except Exception as e1:
+        # Fallback attempts
+        fallbacks = ["utf-8-sig", "utf-16", "ISO-8859-1"]
+        for fb in fallbacks:
+            try:
+                if not isinstance(file, str):
+                    file.seek(0)
+                df = pd.read_csv(file, encoding=fb, sep=None, engine="python")
+                return df, None
+            except Exception:
+                continue
+
+        return None, f"Error reading CSV: {e1}"
     
 def remove_outliers_iqr(df, columns=None, factor=1.5):
     # Automatically use all numeric columns if none specified
@@ -150,3 +164,4 @@ def remove_outliers_iqr(df, columns=None, factor=1.5):
         mask &= df[col].between(lower_bound, upper_bound)
 
     return df[mask]
+
