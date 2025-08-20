@@ -8,6 +8,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
 from datetime import datetime
+import os
 
 pd.options.mode.copy_on_write = True
 
@@ -374,4 +375,5 @@ def process_file(file, sample_size=None):
         print(f"An error occurred: {e}")
 
         return None, f"Processing error: {e}"
+
 
