@@ -26,26 +26,48 @@ def detect_encoding(file):
         return None
 
 
+import pandas as pd
+import chardet
+
+def detect_encoding(file, sample_size=10000):
+    """Detect encoding using chardet."""
+    with open(file, "rb") as f:
+        raw_data = f.read(sample_size)
+    result = chardet.detect(raw_data)
+    return result.get("encoding")
+
 def read_csv_with_encoding(file, sample_size=None):
     detected_encoding = detect_encoding(file)
     if detected_encoding is None:
         return None, "Encoding detection failed."
-    try:
-        if sample_size:
-            df = pd.read_csv(file, encoding=detected_encoding, nrows=sample_size)
-        else:
-            df = pd.read_csv(file, encoding=detected_encoding)
-    except UnicodeDecodeError:
-        try:
-            df = pd.read_csv(file, encoding="ISO-8859-1")
-        except Exception as e:
-            return None, f"Encoding Error: {e}"
 
-    if df.empty or len(df.columns) == 1:
+    try:
+        df = pd.read_csv(
+            file,
+            encoding=detected_encoding,
+            nrows=sample_size,
+            sep=None,       # auto-detect delimiter
+            engine="python"
+        )
+    except pd.errors.EmptyDataError:
+        return None, "The file is empty."
+    except pd.errors.ParserError as e:
+        return None, f"Parser Error: {e}"
+    except Exception as e:
+        # fallback encoding
         try:
-            df = pd.read_csv(file, encoding=detected_encoding, header=None)
+            df = pd.read_csv(file, encoding="ISO-8859-1", nrows=sample_size, sep=None, engine="python")
+        except Exception as e2:
+            return None, f"Encoding Error: {e2}"
+
+    # Handle "No columns" or "1 column only"
+    if df.empty or len(df.columns) <= 1:
+        try:
+            df = pd.read_csv(file, encoding=detected_encoding, header=None, sep=None, engine="python")
         except Exception as e:
             return None, f"Final Read Error: {e}"
+
+    return df, None
 
     return df, None
 
@@ -344,4 +366,5 @@ def process_file(file, sample_size=None):
 
     except Exception as e:
         print(f"An error occurred: {e}")
+
         return None, f"Processing error: {e}"
