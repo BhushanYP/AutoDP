@@ -66,30 +66,31 @@ def detect_encoding(file, sample_size=32768, samples=3):
     Limits file size to 1 GB for safety.
     """
     try:
+        raw_data = b""
+
         if isinstance(file, str):  # File path
             file_size = os.path.getsize(file)
             if file_size > MAX_FILE_SIZE:
-                return {"status": "error", "encoding": None,
-                        "message": f"File too large ({file_size / (1024**3):.2f} GB). Limit is 1 GB."}
+                return None, f"❌ File too large ({file_size / (1024**3):.2f} GB). Limit is 1 GB."
 
             positions = [0]
             if file_size > sample_size:
                 step = file_size // (samples + 1)
                 positions.extend(step * i for i in range(1, samples))
 
-            raw_data = b""
             with open(file, "rb") as f:
+                chunks = []
                 for pos in positions:
                     f.seek(pos)
-                    raw_data += f.read(sample_size)
+                    chunks.append(f.read(sample_size))
+                raw_data = b"".join(chunks)
 
         else:  # File-like object
             if hasattr(file, "seek") and hasattr(file, "tell"):
                 file.seek(0, 2)
                 size = file.tell()
                 if size > MAX_FILE_SIZE:
-                    return {"status": "error", "encoding": None,
-                            "message": f"File too large ({size / (1024**3):.2f} GB). Limit is 1 GB."}
+                    return None, f"❌ File too large ({size / (1024**3):.2f} GB). Limit is 1 GB."
                 file.seek(0)
 
             raw_data = file.read(sample_size * samples)
@@ -101,25 +102,23 @@ def detect_encoding(file, sample_size=32768, samples=3):
         confidence = result.get("confidence", 0)
 
         if encoding and confidence >= 0.5:
-            return {"status": "detected", "encoding": encoding,
-                    "message": f"Detected encoding '{encoding}' (confidence {confidence:.2f})"}
+            return encoding, f"✅ Detected encoding '{encoding}' (confidence {confidence:.2f})"
         else:
-            return {"status": "fallback", "encoding": "utf-8",
-                    "message": "Low confidence detection. Falling back to 'utf-8'."}
+            return "utf-8", "⚠️ Low confidence detection. Falling back to 'utf-8'."
 
     except Exception as e:
-        return {"status": "error", "encoding": None,
-                "message": f"Encoding detection failed: {e}"}
+        return None, f"❌ Encoding detection failed: {e}"
+
 
 def read_csv_with_encoding(file):
     """
     Reads a CSV with robust encoding fallback.
-    Returns DataFrame + status + message.
+    Always returns (DataFrame, message).
     """
     encodings = []
-    det = detect_encoding(file)
-    if det["encoding"]:
-        encodings.append(det["encoding"])
+    encoding, msg = detect_encoding(file)
+    if encoding:
+        encodings.append(encoding)
     encodings.extend(["utf-8", "utf-8-sig", "latin1", "ISO-8859-1", "cp1252"])
 
     for enc in encodings:
@@ -127,7 +126,7 @@ def read_csv_with_encoding(file):
             if not isinstance(file, str):
                 file.seek(0)
             df = pd.read_csv(file, encoding=enc)
-            return df, "success", f"Read successfully with encoding '{enc}'"
+            return df, f"✅ Read successfully with encoding '{enc}'"
         except Exception:
             continue
 
@@ -136,9 +135,9 @@ def read_csv_with_encoding(file):
         if not isinstance(file, str):
             file.seek(0)
         df = pd.read_csv(file, encoding="utf-8", errors="ignore")
-        return df, "warning", "Read with utf-8 (errors ignored)"
+        return df, "⚠️ Read with utf-8 (errors ignored)"
     except Exception as e:
-        return pd.DataFrame(), "error", f"❌ Completely failed to read CSV: {e}"
+        return pd.DataFrame(), f"❌ Completely failed to read CSV: {e}"
 
 def remove_outliers_iqr(df, columns=None, factor=1.5):
     # Automatically use all numeric columns if none specified
@@ -162,4 +161,5 @@ def remove_outliers_iqr(df, columns=None, factor=1.5):
         mask &= df[col].between(lower_bound, upper_bound)
 
     return df[mask]
+
 
