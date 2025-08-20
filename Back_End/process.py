@@ -114,19 +114,33 @@ def detect_encoding(file, sample_size=32768, samples=3):
 
 
 def read_csv_with_encoding(file):
-    """Reads a CSV with encoding detection and error handling."""
+    """Reads a CSV with robust encoding fallback. Always returns a DataFrame + message."""
+    
+    # Encodings to try (detect first, then fallbacks)
+    encodings = []
     encoding, error = detect_encoding(file)
-    if error:
-        return None, error
-
+    if encoding:
+        encodings.append(encoding)
+    # Add common fallbacks
+    encodings.extend(["utf-8", "utf-8-sig", "latin1", "ISO-8859-1", "cp1252"])
+    
+    for enc in encodings:
+        try:
+            if not isinstance(file, str):
+                file.seek(0)
+            df = pd.read_csv(file, encoding=enc)
+            return df, f"Read successfully with encoding '{enc}'"
+        except Exception:
+            continue
+    
+    # 🔥 Last resort: force read ignoring errors
     try:
         if not isinstance(file, str):
-            file.seek(0)  # Reset stream before reading again
-
-        df = pd.read_csv(file, encoding=encoding)
-        return df, None
+            file.seek(0)
+        df = pd.read_csv(file, encoding="utf-8", errors="ignore")
+        return df, "Read with utf-8 (errors ignored)"
     except Exception as e:
-        return None, f"Error reading CSV: {e}"
+        return pd.DataFrame(), f"❌ Completely failed to read CSV: {e}"
     
 def remove_outliers_iqr(df, columns=None, factor=1.5):
     # Automatically use all numeric columns if none specified
