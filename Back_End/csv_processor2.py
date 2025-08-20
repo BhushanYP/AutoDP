@@ -30,9 +30,16 @@ import pandas as pd
 import chardet
 
 def detect_encoding(file, sample_size=10000):
-    """Detect encoding using chardet."""
-    with open(file, "rb") as f:
-        raw_data = f.read(sample_size)
+    """Detect encoding from file path or file-like object."""
+    if isinstance(file, (str, os.PathLike)):
+        # File path case
+        with open(file, "rb") as f:
+            raw_data = f.read(sample_size)
+    else:
+        # File-like object (e.g. UploadedFile)
+        raw_data = file.read(sample_size)
+        file.seek(0)  # reset pointer for next read
+    
     result = chardet.detect(raw_data)
     return result.get("encoding")
 
@@ -46,28 +53,27 @@ def read_csv_with_encoding(file, sample_size=None):
             file,
             encoding=detected_encoding,
             nrows=sample_size,
-            sep=None,       # auto-detect delimiter
+            sep=None,
             engine="python"
         )
-    except pd.errors.EmptyDataError:
-        return None, "The file is empty."
-    except pd.errors.ParserError as e:
-        return None, f"Parser Error: {e}"
-    except Exception as e:
+    except Exception:
         # fallback encoding
         try:
-            df = pd.read_csv(file, encoding="ISO-8859-1", nrows=sample_size, sep=None, engine="python")
+            if isinstance(file, (str, os.PathLike)):
+                df = pd.read_csv(file, encoding="ISO-8859-1", nrows=sample_size, sep=None, engine="python")
+            else:
+                file.seek(0)
+                df = pd.read_csv(file, encoding="ISO-8859-1", nrows=sample_size, sep=None, engine="python")
         except Exception as e2:
             return None, f"Encoding Error: {e2}"
 
-    # Handle "No columns" or "1 column only"
     if df.empty or len(df.columns) <= 1:
         try:
+            if not isinstance(file, (str, os.PathLike)):
+                file.seek(0)
             df = pd.read_csv(file, encoding=detected_encoding, header=None, sep=None, engine="python")
         except Exception as e:
             return None, f"Final Read Error: {e}"
-
-    return df, None
 
     return df, None
 
@@ -368,3 +374,4 @@ def process_file(file, sample_size=None):
         print(f"An error occurred: {e}")
 
         return None, f"Processing error: {e}"
+
